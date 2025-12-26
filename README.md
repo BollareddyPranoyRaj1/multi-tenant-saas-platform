@@ -13,7 +13,7 @@ This repo includes:
 Start everything:
 
 ```powershell
-cd "c:\Users\yaswa\OneDrive\Desktop\Multi-tenant-saas-platform"
+cd ~/Desktop/multi-tenant-saas-platform
 docker-compose up -d
 ```
 
@@ -73,7 +73,7 @@ Pushing to `main` (or `master`) will build and publish the site via `.github/wor
 
 Your site URL will be:
 
-- `https://<owner>.github.io/<repo>/`
+- `https://github.com/BollareddyPranoyRaj1/multi-tenant-saas-platform`
 
 ### Notes
 
@@ -92,10 +92,6 @@ All required documentation artifacts are under `docs/`:
 - Technical specification + Docker setup: `docs/technical-spec.md`
 - Research (multi-tenancy, stack justification, security): `docs/research.md`
 - API documentation (19 core endpoints + operational endpoints): `docs/API.md`
-
-## Demo video
-
-YouTube (Unlisted/Public, 5–12 minutes): https://www.youtube.com/watch?v=REPLACE_WITH_YOUR_VIDEO_ID
 
 ## Notes
 
