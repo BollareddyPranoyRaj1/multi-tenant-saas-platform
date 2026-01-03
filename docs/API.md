@@ -1,542 +1,391 @@
-# API Documentation (all endpoints)
+# Backend API Documentation
 
-This file documents the backend endpoints implemented in `backend/src/routes/*`.
+This document describes all backend APIs implemented under `backend/src/routes/*`.
+
+---
 
 ## Base URLs
 
-When running via Docker Compose:
-- Backend (direct): `http://localhost:5000/api`
-- Frontend (Nginx proxy to backend): `http://localhost:3000/api`
+- Backend (Docker): http://localhost:5000/api  
+- Frontend (Nginx proxy): http://localhost:3000/api
+
+---
 
 ## Authentication
 
 Most endpoints require a JWT.
 
 Header:
+Authorization: Bearer <token>
 
-`Authorization: Bearer <token>`
+JWT payload contains:
+- userId
+- tenantId (null for super_admin)
+- role
 
-The JWT contains:
-- `userId`
-- `tenantId` (nullable; `null` for `super_admin`)
-- `role`
+---
 
 ## Roles
 
-- `super_admin` (platform-level; not tied to a tenant)
-- `tenant_admin` (admin inside one tenant)
-- `user` (regular tenant member)
+- super_admin → Platform-level
+- tenant_admin → Admin within a tenant
+- user → Regular tenant member
 
-## Response format
+Important:
+- super_admin is platform-scoped and cannot access tenant resources (projects, tasks, users).
+- Tenant endpoints always enforce tenant isolation using tenantId from JWT.
 
-Most endpoints use a consistent envelope:
-
-- Success: `{ "success": true, "data": ..., "message"?: string }`
-- Error: `{ "success": false, "message": string, "data"?: any }`
-
-Operational endpoints (`/health`) return a simpler shape.
-
-## Status / constraints
-
-Tasks are constrained to:
-- `status ∈ { todo, in_progress, done, cancelled }`
-- `priority ∈ { low, medium, high, urgent }`
-
-## Endpoint count note (rubric alignment)
-
-The app exposes **19 core application endpoints** (Auth + Tenants + Users + Projects + Tasks) and **2 operational endpoints** (`GET /health`, `GET /`).
-
-Important access note:
-- `super_admin` is **platform-scoped** and is not allowed to call tenant-scoped resources like Projects/Tasks/Users in this demo implementation.
-- Tenant-scoped endpoints require `tenant_admin` or `user` and always enforce tenant isolation using the `tenantId` from the JWT.
 ---
-## Operational endpoints
 
-### GET `/api/health`
+## Response Format
+
+Success:
+{ "success": true, "data": ..., "message": "optional" }
+
+Error:
+{ "success": false, "message": "error message", "data": "optional" }
+
+---
+
+## Constraints
+
+Task status:
+- todo
+- in_progress
+- done
+- cancelled
+
+Task priority:
+- low
+- medium
+- high
+- urgent
+
+---
+
+## Endpoint Count
+
+- Core APIs: 19  
+  (Auth + Tenants + Users + Projects + Tasks)
+- Operational APIs: 2  
+  (/health, /)
+
+---
+
+# Operational Endpoints
+
+## GET /api/health
 
 Readiness probe.
 
 Responses:
-- `200` when ready: `{ "status": "ok", "database": "connected" }`
-- `503` while initializing: `{ "status": "initializing", "database": "connected" }`
-- `500` if DB down: `{ "status": "error", "database": "disconnected" }`
-
-### GET `/api`
-
-API info.
-
-Auth: not required.
-
-Response (`200`):
-```json
-{ "success": true, "data": { "version": "1.0.0" } }
-```
+- 200 → { "status": "ok", "database": "connected" }
+- 503 → { "status": "initializing", "database": "connected" }
+- 500 → { "status": "error", "database": "disconnected" }
 
 ---
 
-## Core endpoints (19)
+## GET /api
 
-## Auth (4)
+API metadata.
 
-### POST `/api/auth/register-tenant`
+Auth: Not required
 
-Creates a tenant and the first tenant admin user.
+Response:
+{ "success": true, "data": { "version": "1.0.0" } }
 
-Auth: not required.
+---
+
+# Auth (4)
+
+## POST /api/auth/register-tenant
+
+Creates a tenant and first tenant admin.
+
+Auth: Not required
 
 Body:
-- `tenantName` (string, required)
-- `subdomain` (string, required, unique)
-- `adminEmail` (string, required)
-- `adminPassword` (string, required)
-- `adminFullName` (string, required)
+- tenantName (string, required)
+- subdomain (string, required, unique)
+- adminEmail (string, required)
+- adminPassword (string, required)
+- adminFullName (string, required)
 
 Responses:
-- `201`:
-  - `data.tenantId`, `data.subdomain`, `data.adminUser`
-- `400` validation errors
-- `409` subdomain exists OR email exists in that tenant
-- `500` internal error
+- 201 success
+- 400 validation error
+- 409 conflict
+- 500 server error
 
-Example response:
-```json
-{
-  "success": true,
-  "message": "Tenant registered successfully",
-  "data": {
-    "tenantId": "<uuid>",
-    "subdomain": "demo",
-    "adminUser": {
-      "id": "<uuid>",
-      "email": "admin@demo.com",
-      "fullName": "Demo Admin",
-      "role": "tenant_admin"
-    }
-  }
-}
-```
+---
 
-### POST `/api/auth/login`
+## POST /api/auth/login
 
-Returns a JWT.
+Authenticate and return JWT.
 
-Auth: not required.
+Auth: Not required
 
-Body (common):
-- `email` (string, required)
-- `password` (string, required)
-
-Tenant user login requires *one* of:
-- `tenantSubdomain` (string)
-- `tenantId` (uuid string)
+Tenant login requires:
+- email
+- password
+- tenantSubdomain OR tenantId
 
 Super admin login:
-- Uses only `email` + `password` (tenant identifier is ignored).
+- email
+- password
 
 Responses:
-- `200`: `data.user`, `data.token`, `data.expiresIn`
-- `400` validation errors OR tenant identifier required
-- `401` invalid credentials
-- `403` account/tenant suspended or inactive
-- `404` tenant not found (when tenantSubdomain/tenantId is provided)
-
-Example (tenant login) response:
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": "<uuid>",
-      "email": "admin@demo.com",
-      "fullName": "Demo Admin",
-      "role": "tenant_admin",
-      "tenantId": "<tenant-uuid>"
-    },
-    "token": "<jwt>",
-    "expiresIn": 86400
-  }
-}
-```
-
-### GET `/api/auth/me`
-
-Returns the currently authenticated user and (if applicable) tenant info.
-
-Auth: required.
-
-Responses:
-- `200`: user profile + `tenant` object (nullable for `super_admin`)
-- `401` missing/invalid token
-- `404` user not found
-
-Example response:
-```json
-{
-  "success": true,
-  "data": {
-    "id": "<uuid>",
-    "email": "admin@demo.com",
-    "fullName": "Demo Admin",
-    "role": "tenant_admin",
-    "isActive": true,
-    "tenant": {
-      "id": "<tenant-uuid>",
-      "name": "Demo Tenant",
-      "subdomain": "demo",
-      "subscriptionPlan": "free",
-      "maxUsers": 5,
-      "maxProjects": 3
-    }
-  }
-}
-```
-
-### POST `/api/auth/logout`
-
-Logs a logout event to audit logs.
-
-Auth: required.
-
-Responses:
-- `200`:
-```json
-{ "success": true, "message": "Logged out successfully" }
-```
+- 200 success
+- 400 invalid input
+- 401 invalid credentials
+- 403 inactive/suspended
+- 404 tenant not found
 
 ---
 
-## Tenants (3)
+## GET /api/auth/me
 
-### GET `/api/tenants`
+Returns current user and tenant info.
 
-Lists tenants.
+Auth: Required
 
-Auth: required.
+Responses:
+- 200 success
+- 401 invalid token
+- 404 user not found
 
-Role: `super_admin` only.
+---
 
-Query params:
-- `page` (number, default 1)
-- `limit` (number, default 10, max 100)
-- `status` (string, optional)
-- `subscriptionPlan` (string, optional)
+## POST /api/auth/logout
 
-Response (`200`):
-- `data.tenants`: array of tenants (includes `totalUsers`, `totalProjects`)
-- `data.pagination`: `{ currentPage, totalPages, totalTenants, limit }`
+Logs logout event.
 
-### GET `/api/tenants/:tenantId`
+Auth: Required
 
-Gets tenant details and simple stats.
+Response:
+- 200 success
 
-Auth: required.
+---
+
+# Tenants (3)
+
+## GET /api/tenants
+
+List tenants (paginated).
+
+Auth: Required  
+Role: super_admin only
+
+Query:
+- page (default 1)
+- limit (default 10, max 100)
+- status
+- subscriptionPlan
+
+---
+
+## GET /api/tenants/:tenantId
+
+Get tenant details and stats.
+
+Auth: Required
 
 Access:
-- `super_admin`: any tenant
-- `tenant_admin`/`user`: only their own tenant (must match JWT `tenantId`)
-
-Response (`200`): tenant details + `stats.totalUsers/totalProjects/totalTasks`
-
-Errors:
-- `401` missing/invalid token
-- `403` unauthorized access
-- `404` tenant not found
-
-### PUT `/api/tenants/:tenantId`
-
-Updates tenant fields.
-
-Auth: required.
-
-Access rules:
-- `super_admin` can update: `name`, `status`, `subscriptionPlan`, `maxUsers`, `maxProjects`
-- Non-`super_admin` can update **only** `name`, and only for their own tenant
-
-Body (all optional):
-- `name` (string)
-- `status` (string)
-- `subscriptionPlan` (string)
-- `maxUsers` (number)
-- `maxProjects` (number)
-
-Errors:
-- `400` no fields to update
-- `403` forbidden
-- `404` tenant not found
+- super_admin → any tenant
+- others → own tenant only
 
 ---
 
-## Users (4)
+## PUT /api/tenants/:tenantId
 
-### POST `/api/users/:tenantId/users`
+Update tenant fields.
 
-Creates a user inside a tenant.
+Auth: Required
 
-Auth: required.
+Permissions:
+- super_admin → all fields
+- others → name only (own tenant)
 
-Role: `tenant_admin` only.
+Fields:
+- name
+- status
+- subscriptionPlan
+- maxUsers
+- maxProjects
 
-Path params:
-- `tenantId` (uuid)
+---
 
-Body:
-- `email` (string, required)
-- `password` (string, required)
-- `fullName` (string, required)
-- `role` (string, optional; default `user`)
+# Users (4)
+
+## POST /api/users/:tenantId/users
+
+Create user inside tenant.
+
+Auth: Required  
+Role: tenant_admin
 
 Limits:
-- Enforces `tenants.max_users` (returns `403` if reached).
+- Enforces max_users
 
-Errors:
-- `403` forbidden OR subscription limit reached
-- `404` tenant not found
-- `409` email exists in tenant
+---
 
-### GET `/api/users/:tenantId/users`
+## GET /api/users/:tenantId/users
 
-Lists users within a tenant.
+List users in tenant.
 
-Auth: required.
+Auth: Required
 
 Access:
-- `super_admin`: allowed
-- Tenant roles: only if `:tenantId` matches JWT `tenantId`
+- super_admin OR same tenant
 
-Query params:
-- `search` (string; matches email/fullName)
-- `role` (string)
-- `page` (number, default 1)
-- `limit` (number, default 50, max 100)
+Query:
+- search
+- role
+- page
+- limit
 
-Response (`200`):
-- `data.users`: array
-- `data.total`
-- `data.pagination`: `{ currentPage, totalPages, limit }`
+---
 
-### PUT `/api/users/:userId`
+## PUT /api/users/:userId
 
-Updates a user.
+Update user.
 
-Auth: required.
-
-Body (optional; authorization controls what is allowed):
-- `fullName` (string)
-- `role` (string)
-- `isActive` (boolean)
-
-Authorization rules (as implemented):
-- Must be same tenant (unless `super_admin`).
-- `fullName` can be updated by:
-  - the user themself, or
-  - a `tenant_admin`, or
-  - `super_admin`
-- `role` and `isActive` can be updated only by `tenant_admin`.
-
-Errors:
-- `403` forbidden/not authorized
-- `404` user not found
-
-### DELETE `/api/users/:userId`
-
-Deletes a user.
-
-Auth: required.
-
-Role: `tenant_admin` only.
+Auth: Required
 
 Rules:
-- Must be in same tenant.
-- Cannot delete self.
-- Tasks assigned to the user are unassigned automatically.
-
-Errors:
-- `403` forbidden/cannot delete self
-- `404` user not found
+- fullName → self / tenant_admin / super_admin
+- role, isActive → tenant_admin only
 
 ---
 
-## Projects (4)
+## DELETE /api/users/:userId
 
-### POST `/api/projects`
+Delete user.
 
-Creates a project in the caller's tenant.
+Auth: Required  
+Role: tenant_admin
 
-Auth: required.
+Rules:
+- Cannot delete self
+- Tasks are auto-unassigned
 
-Body:
-- `name` (string, required)
-- `description` (string, optional)
-- `status` (string, optional; default `active`)
+---
+
+# Projects (4)
+
+## POST /api/projects
+
+Create project.
+
+Auth: Required
 
 Limits:
-- Enforces `tenants.max_projects` (returns `403` if reached).
-
-Errors:
-- `400` validation errors
-- `403` project limit reached
-
-### GET `/api/projects`
-
-Lists projects in the caller's tenant.
-
-Auth: required.
-
-Query params:
-- `status` (string)
-- `search` (string; matches name)
-- `page` (number, default 1)
-- `limit` (number, default 20, max 100)
-
-Response (`200`):
-- `data.projects`: array (includes `taskCount`, `completedTaskCount`)
-- `data.total`
-- `data.pagination`
-
-### PUT `/api/projects/:projectId`
-
-Updates a project.
-
-Auth: required.
-
-Authorization rules:
-- Must be same tenant (unless `super_admin`).
-- Allowed if caller is:
-  - `tenant_admin`, or
-  - the project creator, or
-  - `super_admin`
-
-Body (optional):
-- `name` (string)
-- `description` (string; can be set to empty)
-- `status` (string)
-
-Errors:
-- `400` no fields to update
-- `403` forbidden/not authorized
-- `404` project not found
-
-### DELETE `/api/projects/:projectId`
-
-Deletes a project (and its tasks).
-
-Auth: required.
-
-Authorization rules:
-- Must be same tenant (unless `super_admin`).
-- Allowed if caller is `tenant_admin`, project creator, or `super_admin`.
-
-Errors:
-- `403` forbidden/not authorized
-- `404` project not found
+- Enforces max_projects
 
 ---
 
-## Tasks (4)
+## GET /api/projects
 
-### POST `/api/tasks/projects/:projectId/tasks`
+List tenant projects.
 
-Creates a task under a project.
+Auth: Required
 
-Auth: required.
-
-Path params:
-- `projectId` (uuid)
-
-Body:
-- `title` (string, required)
-- `description` (string, optional)
-- `assignedTo` (uuid string, optional; must be a user in the same tenant)
-- `priority` (string, optional; default `medium`)
-- `dueDate` (date/time string, optional)
-
-Behavior:
-- New tasks start with `status = todo`.
-
-Errors:
-- `404` project not found
-- `403` project does not belong to tenant
-- `400` invalid `assignedTo`
-
-### GET `/api/tasks/projects/:projectId/tasks`
-
-Lists tasks for a project.
-
-Auth: required.
-
-Query params:
-- `status` (string)
-- `assignedTo` (uuid string)
-- `priority` (string)
-- `search` (string; matches title)
-- `page` (number, default 1)
-- `limit` (number, default 50, max 100)
-
-Response (`200`):
-- `data.tasks`: array
-- `data.total`
-- `data.pagination`
-
-Errors:
-- `404` project not found
-- `403` forbidden
-
-### PATCH `/api/tasks/:taskId/status`
-
-Updates only the status field.
-
-Auth: required.
-
-Body:
-- `status` (string, required; should be one of `todo | in_progress | done | cancelled`)
-
-Errors:
-- `404` task not found
-- `403` forbidden
-
-### PUT `/api/tasks/:taskId`
-
-Updates task fields.
-
-Auth: required.
-
-Body (all optional):
-- `title` (string)
-- `description` (string)
-- `status` (string)
-- `priority` (string)
-- `assignedTo` (uuid string or null)
-- `dueDate` (date/time string or null)
-
-Notes:
-- If `assignedTo` is provided and non-null, it must reference a user in the same tenant.
-
-Errors:
-- `400` no fields to update OR invalid assignedTo
-- `404` task not found
-- `403` forbidden
+Query:
+- status
+- search
+- page
+- limit
 
 ---
 
-## Quick examples
+## PUT /api/projects/:projectId
 
-Tenant admin login:
-```bash
-curl -s http://localhost:5000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@demo.com","password":"Demo@123","tenantSubdomain":"demo"}'
-```
+Update project.
+
+Auth: Required
+
+Allowed:
+- tenant_admin
+- project creator
+
+---
+
+## DELETE /api/projects/:projectId
+
+Delete project and tasks.
+
+Auth: Required
+
+---
+
+# Tasks (4)
+
+## POST /api/tasks/projects/:projectId/tasks
+
+Create task.
+
+Auth: Required
+
+Default:
+- status = todo
+
+---
+
+## GET /api/tasks/projects/:projectId/tasks
+
+List tasks for project.
+
+Auth: Required
+
+Query:
+- status
+- assignedTo
+- priority
+- search
+- page
+- limit
+
+---
+
+## PATCH /api/tasks/:taskId/status
+
+Update task status only.
+
+Auth: Required
+
+Body:
+- status (todo | in_progress | done | cancelled)
+
+---
+
+## PUT /api/tasks/:taskId
+
+Update task fields.
+
+Auth: Required
+
+Fields:
+- title
+- description
+- status
+- priority
+- assignedTo
+- dueDate
+
+---
+
+# Quick cURL Examples
+
+Tenant login:
+curl http://localhost:5000/api/auth/login \
+-H "Content-Type: application/json" \
+-d '{"email":"admin@demo.com","password":"Demo@123","tenantSubdomain":"demo"}'
 
 Get current user:
-```bash
-curl -s http://localhost:5000/api/auth/me \
-  -H "Authorization: Bearer <token>"
-```
+curl http://localhost:5000/api/auth/me \
+-H "Authorization: Bearer <token>"
 
 Update task status:
-```bash
-curl -s -X PATCH http://localhost:5000/api/tasks/<taskId>/status \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"status":"done"}'
-```
+curl -X PATCH http://localhost:5000/api/tasks/<taskId>/status \
+-H "Authorization: Bearer <token>" \
+-d '{"status":"done"}
