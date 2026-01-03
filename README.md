@@ -109,3 +109,4 @@ Source SVGs are also included for crisp zooming:
 - `er-diagram.svg`
 ## Setup Instructions
 ## Backend Overview
+## Frontend Overview
